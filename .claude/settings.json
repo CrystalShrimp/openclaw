@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/hooks/pre_tool_use.py",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}

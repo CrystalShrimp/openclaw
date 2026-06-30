@@ -1,0 +1,46 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment & secrets
+.env
+api.txt
+
+# Profile configs (contain API tokens) — track .example.json templates only
+config/settings_*.json
+!config/settings_*.example.json
+
+# Local/personal config (machine-specific paths, runtime state, generated)
+config/shortcuts.json
+config/claude_settings.json
+config/active_profile
+
+# Logs
+*.log
+.sessions/
+
+# Session persistence
+.sessions/
+
+# Windows Zone.Identifier
+*.Zone.Identifier
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+openclaw_debug/

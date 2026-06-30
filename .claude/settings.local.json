@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run:*)",
+      "Bash(python:*)",
+      "Bash(pip show:*)",
+      "Bash(pip list:*)",
+      "Bash(curl:*)"
+    ]
+  }
+}

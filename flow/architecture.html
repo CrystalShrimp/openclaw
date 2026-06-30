@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>OpenClaw 架构与脆弱点</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    margin: 0; padding: 32px;
+    background: #f7fafc; color: #1a202c; line-height: 1.55;
+  }
+  h1 { margin: 0 0 4px; font-size: 28px; }
+  h2 {
+    margin: 48px 0 16px; font-size: 22px;
+    padding: 10px 14px; border-radius: 6px;
+    color: white;
+  }
+  h3 { margin: 24px 0 12px; font-size: 16px; color: #2d3748; }
+  .lead { color: #4a5568; margin: 0 0 24px; max-width: 1200px; }
+
+  /* 六大分块的主题色 */
+  .theme-ws     { background: #38b2ac; }   /* 飞书WS - 青色 */
+  .theme-route  { background: #ed8936; }   /* 事件路由 - 橙色 */
+  .theme-proc   { background: #9f7aea; }   /* 子进程管理 - 紫色 */
+  .theme-cli    { background: #f56565; }   /* Claude CLI - 红色 */
+  .theme-card   { background: #48bb78; }   /* 飞书卡片 - 绿色 */
+  .theme-hook   { background: #d69e2e; }   /* Hook 审批 - 金色 */
+
+  /* 主流程总览图 */
+  .overview {
+    background: white; padding: 24px; border-radius: 8px;
+    border: 1px solid #e2e8f0; margin: 16px 0 32px;
+    overflow-x: auto;
+  }
+  .overview-flow {
+    display: flex; align-items: stretch; gap: 6px;
+    min-width: 900px;
+  }
+  .ov-block {
+    flex: 1; padding: 14px; border-radius: 6px;
+    color: white; position: relative;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .ov-block .num {
+    font-size: 11px; opacity: 0.85; font-weight: 600;
+    letter-spacing: 1px;
+  }
+  .ov-block .name { font-size: 14px; font-weight: 600; }
+  .ov-block .file {
+    font-family: ui-monospace, monospace;
+    font-size: 10px; opacity: 0.9; margin-top: 2px;
+  }
+  .ov-arrow {
+    display: flex; align-items: center; color: #cbd5e0;
+    font-size: 24px; font-weight: 300;
+  }
+
+  /* 分块容器 */
+  .section {
+    background: white; border-radius: 8px;
+    border: 1px solid #e2e8f0; padding: 20px 24px;
+    margin: 16px 0; max-width: 1200px;
+  }
+  .section-header {
+    display: flex; align-items: baseline; gap: 12px;
+    padding-bottom: 12px; margin-bottom: 16px;
+    border-bottom: 2px solid;
+  }
+  .section-num {
+    font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+    padding: 3px 8px; border-radius: 3px; color: white;
+  }
+  .section-title { font-size: 18px; font-weight: 600; color: #2d3748; }
+  .section-file {
+    font-family: ui-monospace, monospace; font-size: 12px;
+    color: #718096; margin-left: auto;
+  }
+
+  /* 内部数据流图 */
+  .flow {
+    display: flex; align-items: stretch; flex-wrap: wrap; gap: 4px;
+    margin: 12px 0;
+  }
+  .step {
+    flex: 1 1 0; min-width: 130px;
+    background: #f7fafc; border-radius: 6px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-left: 3px solid #a0aec0;
+  }
+  .step .title { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+  .step .file {
+    font-family: ui-monospace, monospace; font-size: 10px;
+    color: #718096; margin-bottom: 4px;
+  }
+  .step .desc { font-size: 11px; color: #4a5568; line-height: 1.5; }
+  .arrow {
+    display: flex; align-items: center; justify-content: center;
+    color: #a0aec0; font-size: 18px; padding: 0 2px;
+  }
+
+  /* 脆弱点卡片 */
+  .vulns {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 10px; margin: 12px 0;
+  }
+  .vuln {
+    background: #fffaf0; border: 1px solid #fbd38d;
+    border-left: 4px solid #dd6b20;
+    border-radius: 4px; padding: 10px 12px;
+    font-size: 12px;
+  }
+  .vuln .id {
+    display: inline-block; background: #dd6b20; color: white;
+    font-family: ui-monospace, monospace; font-size: 10px;
+    padding: 1px 6px; border-radius: 3px; margin-right: 6px;
+    font-weight: 600;
+  }
+  .vuln .what { color: #744210; }
+  .vuln .why { color: #9c4221; font-size: 11px; margin-top: 4px; }
+
+  /* 排查入口 */
+  .diag {
+    background: #ebf8ff; border-left: 4px solid #3182ce;
+    padding: 10px 14px; border-radius: 4px;
+    margin: 12px 0; font-size: 12px;
+  }
+  .diag b { color: #2c5282; }
+  .diag code {
+    font-family: ui-monospace, monospace;
+    background: rgba(0,0,0,0.06); padding: 1px 5px;
+    border-radius: 3px; font-size: 11px;
+  }
+
+  /* 错误样本 */
+  .err-sample {
+    background: #1a202c; color: #fed7d7;
+    font-family: ui-monospace, monospace; font-size: 11px;
+    padding: 10px 14px; border-radius: 4px;
+    margin: 8px 0; line-height: 1.6;
+    border-left: 3px solid #fc8181;
+  }
+  .err-sample .c { color: #718096; font-style: italic; }
+
+  /* JSONL 流样本 */
+  .jsonl {
+    background: #1a202c; color: #e2e8f0;
+    font-family: ui-monospace, monospace; font-size: 11px;
+    padding: 12px 14px; border-radius: 4px;
+    margin: 8px 0; line-height: 1.7;
+    overflow-x: auto;
+  }
+  .jsonl .k { color: #63b3ed; }
+  .jsonl .s { color: #9ae6b4; }
+  .jsonl .c { color: #718096; font-style: italic; }
+
+  /* 表格 */
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 12px 0; font-size: 12px;
+  }
+  th {
+    background: #edf2f7; text-align: left; padding: 8px 10px;
+    font-weight: 600; border-bottom: 2px solid #cbd5e0;
+  }
+  td {
+    padding: 8px 10px; border-bottom: 1px solid #e2e8f0;
+    vertical-align: top;
+  }
+  td code {
+    font-family: ui-monospace, monospace;
+    background: #edf2f7; padding: 1px 4px; border-radius: 2px;
+    font-size: 11px; color: #c53030;
+  }
+
+  /* Hook 链特例：旁路图 */
+  .bypass {
+    background: #fff5f5; border: 1px dashed #fc8181;
+    padding: 10px 14px; border-radius: 4px;
+    margin: 12px 0; font-size: 12px; color: #c53030;
+  }
+
+  @media (max-width: 900px) {
+    .overview-flow { flex-direction: column; }
+    .ov-arrow { transform: rotate(90deg); padding: 4px 0; }
+    .vulns { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>OpenClaw 架构与脆弱点</h1>
+<p class="lead">
+六大分块的全景数据流，以及每层的脆弱点（来自
+<code>TROUBLESHOOTING.md</code>）。每块都给出排查入口和典型错误样本。
+</p>
+
+<!-- ============ 主流程总览 ============ -->
+<div class="overview">
+  <h3 style="margin-top:0">主数据流总览</h3>
+  <div class="overview-flow">
+    <div class="ov-block theme-ws">
+      <div class="num">① 飞书 WS</div>
+      <div class="name">WebSocket 长连接</div>
+      <div class="file">app/feishu/ws.py</div>
+    </div>
+    <div class="ov-arrow">→</div>
+    <div class="ov-block theme-route">
+      <div class="num">② 事件路由</div>
+      <div class="name">命令分发 + 会话</div>
+      <div class="file">app/feishu/events.py</div>
+    </div>
+    <div class="ov-arrow">→</div>
+    <div class="ov-block theme-proc">
+      <div class="num">③ 子进程管理</div>
+      <div class="name">asyncio subprocess</div>
+      <div class="file">app/agent/cli_loop.py</div>
+    </div>
+    <div class="ov-arrow">→</div>
+    <div class="ov-block theme-cli">
+      <div class="num">④ Claude CLI</div>
+      <div class="name">claude.CMD 子进程</div>
+      <div class="file">npm global bin</div>
+    </div>
+    <div class="ov-arrow">→</div>
+    <div class="ov-block theme-card">
+      <div class="num">⑤ 飞书卡片</div>
+      <div class="name">流式卡片更新</div>
+      <div class="file">cards.py + client.py</div>
+    </div>
+  </div>
+  <div style="margin-top: 18px; display: flex; align-items: center; gap: 8px;">
+    <div style="font-size: 12px; color: #718096;">旁路（仅 m/l 模式触发）：</div>
+    <div class="ov-block theme-hook" style="flex: 0 1 200px; padding: 8px 12px;">
+      <div class="num">⑥ Hook 审批</div>
+      <div class="name">PreToolUse → 卡片审批</div>
+      <div class="file">hooks/router.py + scripts/hooks/</div>
+    </div>
+    <div style="font-size: 18px; color: #cbd5e0;">⇄</div>
+    <div style="font-size: 12px; color: #718096;">连接 ③④（工具调用前后）和 ⑤（审批卡片）</div>
+  </div>
+</div>
+
+<!-- ============ ① 飞书 WS ============ -->
+<h2 class="theme-ws">① 飞书 WebSocket 层</h2>
+
+<div class="section">
+  <div class="section-header" style="border-color: #38b2ac;">
+    <span class="section-num theme-ws">LAYER 1</span>
+    <span class="section-title">WebSocket 长连接（SDK loop 适配）</span>
+    <span class="section-file">app/feishu/ws.py · FeishuWsClient</span>
+  </div>
+
+  <h3>数据流</h3>
+  <div class="flow">
+    <div class="step" style="border-left-color:#38b2ac;">
+      <div class="title">wss://msg-frontier.feishu.cn</div>
+      <div class="file">飞书服务端</div>
+      <div class="desc">WS 帧（event / card）</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#38b2ac;">
+      <div class="title">_handle_data_frame</div>
+      <div class="file">ws.py（子类覆盖）</div>
+      <div class="desc">区分 EVENT / CARD<br/>原 SDK 对 CARD 直接 return</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#38b2ac;">
+      <div class="title">on_message_receive</div>
+      <div class="file">events.py</div>
+      <div class="desc">解析 content / sender<br/><b>3s 内 return</b></div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#38b2ac;">
+      <div class="title">create_task(_dispatch)</div>
+      <div class="file">get_running_loop()</div>
+      <div class="desc">异步派发<br/>不用 SDK 模块顶层 loop</div>
+    </div>
+  </div>
+
+  <h3>脆弱点</h3>
+  <div class="vulns">
+    <div class="vuln">
+      <span class="id">#1.1</span><span class="what">SDK 模块顶层捕获 loop ≠ uvicorn loop</span>
+      <div class="why">根因：lark_oapi 在 import 时抓 loop；uvicorn 用自己的 loop。<b>所有 <code>loop.create_task</code> 必须改 <code>asyncio.get_running_loop().create_task</code></b>。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#1.2</span><span class="what">SDK 对 CARD 帧直接 return</span>
+      <div class="why">根因：<code>_handle_data_frame</code> 只处理 EVENT，CARD 被丢弃 → 所有审批按钮回调丢失（<code>code 200340</code>）。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#1.3</span><span class="what">挂起 Future 阻止 Ctrl+C</span>
+      <div class="why">根因：审批 Future 等卡片点击，卡片因其他 bug 没送达 → asyncio 循环无法关闭。</div>
+    </div>
+  </div>
+
+  <div class="diag">
+    <b>排查入口：</b>
+    日志有 <code>connected to wss://</code> 但没 <code>receive pong</code> → loop 错误（#1.1）；
+    点审批按钮报 200340 → CARD 帧被丢（#1.2）；
+    Ctrl+C 无效 → <code>taskkill /F /PID</code>，查 hook handler 是否有 Future 卡住（#1.3）。
+  </div>
+
+  <div class="err-sample">
+    <span class="c"># 典型症状：连得上但收不到消息</span><br/>
+    INFO: connected to wss://msg-frontier.feishu.cn/ws/v2?...<br/>
+    DEBUG: ping success<br/>
+    <span class="c"># （没有 receive pong，没有 WS frame）</span>
+  </div>
+</div>
+
+<!-- ============ ② 事件路由 ============ -->
+<h2 class="theme-route">② 事件路由层</h2>
+
+<div class="section">
+  <div class="section-header" style="border-color: #ed8936;">
+    <span class="section-num theme-route">LAYER 2</span>
+    <span class="section-title">命令分发 + 会话管理</span>
+    <span class="section-file">app/feishu/events.py · _dispatch / _run_claude</span>
+  </div>
+
+  <h3>命令路由表</h3>
+  <table>
+    <tr><th>分支</th><th>处理</th><th>脆弱点</th></tr>
+    <tr><td><code>/start</code> <code>/new</code></td><td>reset session + kill 进程</td><td>#2.11 不能继承旧 workspace</td></tr>
+    <tr><td><code>/stop</code> 停止</td><td>cancel_by_user(open_id)</td><td>#3.8 不能用 session.current_task_id</td></tr>
+    <tr><td><code>/status</code></td><td>显示 session 状态</td><td>—</td></tr>
+    <tr><td><code>/switch</code></td><td>切 profile + kill</td><td>#3.9 双重"任务失败"（status 语义）</td></tr>
+    <tr><td><code>/model</code></td><td>切模型 + 重跑</td><td><b>#2.2 必须排在 <code>/mode</code> 前</b></td></tr>
+    <tr><td><code>/mode h/m/l</code></td><td>切审批模式</td><td>h 加 <code>--permission-mode bypassPermissions</code></td></tr>
+    <tr><td><code>/pwd</code></td><td>切 workspace</td><td>#4.2 清空 claude_session_id</td></tr>
+    <tr><td><code>/resume &lt;id&gt;</code></td><td>原生 <code>--resume</code></td><td>#4.2 workspace 必须一致</td></tr>
+    <tr><td><code>/continue</code></td><td>原生 <code>--continue</code></td><td>哨兵值 <code>__continue__</code></td></tr>
+    <tr><td><code>/mem</code></td><td>写 CLAUDE.md</td><td><b>#2.6 用 session.workspace</b></td></tr>
+    <tr><td>普通文本</td><td>_run_claude → 子进程管理层</td><td>#2.1 必须 try/except</td></tr>
+  </table>
+
+  <h3>脆弱点</h3>
+  <div class="vulns">
+    <div class="vuln">
+      <span class="id">#2.1</span><span class="what">_dispatch 异常被 asyncio 静默吞</span>
+      <div class="why">create_task 调度的协程未捕获异常 → 用户无反馈。必须 try/except + send_text 反馈。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#2.2</span><span class="what">/model 被 /mode startswith 吞</span>
+      <div class="why"><code>/model</code> 以 <code>/mode</code> 开头，startswith 匹配时短前缀吞长前缀。长前缀必须排前面。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#2.6</span><span class="what">/mem 用 default_workspace</span>
+      <div class="why">用户已经 <code>/pwd</code> 切了工作区，但 <code>/mem</code> 仍写到默认路径。所有文件操作都用 session.workspace。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#2.7</span><span class="what">audit.log 不记录运行中任务</span>
+      <div class="why">log_command_received 放在 _run_claude 末尾，运行中任务在日志中不可见。开头加 <code>"started"</code>。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#2.8</span><span class="what">on_card_action 是 sync，不能 await</span>
+      <div class="why">SDK 要求回调签名 sync。await async 函数 → SyntaxError。拆 <code>cancel_by_user</code>(sync) + <code>cancel_and_wait</code>(async)。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#2.3</span><span class="what">open_id 与 ALLOWED_USERS 不匹配</span>
+      <div class="why">open_id 与 app_id 绑定，换应用就变。代码加日志打印实际 open_id。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#2.5</span><span class="what">pydantic-settings list 字段 + .env 旧字段</span>
+      <div class="why">list 字段需 JSON 格式（不友好）；重构后旧字段报 extra。改 str + extra=ignore。</div>
+    </div>
+  </div>
+
+  <div class="diag">
+    <b>排查入口：</b>
+    发消息无响应 → grep <code>_dispatch</code> 是否有 try/except（#2.1）；
+    <code>/model opus</code> 返回审批帮助 → 命令匹配顺序（#2.2）；
+    权限被拒 → 实际 open_id vs ALLOWED_USERS（#2.3）；
+    SyntaxError <code>await outside async function</code> → sync 回调里 await 了（#2.8）。
+  </div>
+</div>
+
+<!-- ============ ③ 子进程管理 ============ -->
+<h2 class="theme-proc">③ 子进程管理层</h2>
+
+<div class="section">
+  <div class="section-header" style="border-color: #9f7aea;">
+    <span class="section-num theme-proc">LAYER 3</span>
+    <span class="section-title">asyncio subprocess + JSONL reader</span>
+    <span class="section-file">app/agent/cli_loop.py · ClaudeCLILoop</span>
+  </div>
+
+  <h3>数据流（per-message 进程模型）</h3>
+  <div class="flow">
+    <div class="step" style="border-left-color:#9f7aea;">
+      <div class="title">send_and_wait</div>
+      <div class="file">cli_loop.py</div>
+      <div class="desc">per-user Lock<br/>检查 is_running</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#9f7aea;">
+      <div class="title">_start_process</div>
+      <div class="file">cli_loop.py</div>
+      <div class="desc">shutil.which + 组装 args（含 --settings 隔离）<br/>_build_env 注入 profile env<br/>_ensure_hook_config 写 config/claude_settings.json</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#9f7aea;">
+      <div class="title">create_subprocess_exec</div>
+      <div class="file">asyncio</div>
+      <div class="desc">stdin/stdout/stderr PIPE<br/>limit=10MB<br/>cwd=workspace</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#9f7aea;">
+      <div class="title">writer.close()</div>
+      <div class="file">send_and_wait 末尾</div>
+      <div class="desc">EOF = 本条结束<br/>进程随后退出</div>
+    </div>
+    <div class="arrow">⤴</div>
+    <div class="step" style="border-left-color:#9f7aea;">
+      <div class="title">下一条消息</div>
+      <div class="file">_teardown_previous</div>
+      <div class="desc">拆旧 reader task<br/>清 _consumed<br/>起新进程</div>
+    </div>
+  </div>
+
+  <h3>启动参数构造</h3>
+  <div class="jsonl">
+<span class="c"># shutil.which("claude") → C:\Users\...\npm\claude.CMD</span>
+args = [
+    resolved,
+    <span class="s">"--print"</span>,                                         <span class="c"># 单次模式</span>
+    <span class="s">"--output-format"</span>, <span class="s">"stream-json"</span>,             <span class="c"># JSONL 流</span>
+    <span class="s">"--input-format"</span>,  <span class="s">"stream-json"</span>,             <span class="c"># stdin 也 JSONL</span>
+    <span class="s">"--verbose"</span>, <span class="s">"--include-partial-messages"</span>,
+    <span class="c"># 隔离 ~/.claude/settings.json + 叠加 openclaw 自有配置</span>
+    <span class="s">"--setting-sources"</span>, <span class="s">"project,local"</span>,             <span class="c"># 跳过 user 级</span>
+    <span class="s">"--settings"</span>, <span class="s">"config/claude_settings.json"</span>,      <span class="c"># openclaw 配置，优先级最高</span>
+]
+<span class="c"># 会话恢复（原生）</span>
+<span class="k">if</span> resume_session_id:  args.extend([<span class="s">"--resume"</span>, resume_session_id])   <span class="c"># /resume &lt;id&gt;</span>
+<span class="k">elif</span> claude_session_id: args.append(<span class="s">"--continue"</span>)                    <span class="c"># /continue</span>
+<span class="c"># 审批模式（原生）</span>
+<span class="k">if</span> approval_mode == <span class="s">"h"</span>: args.extend([<span class="s">"--permission-mode"</span>, <span class="s">"bypassPermissions"</span>])
+  </div>
+
+  <h3>模型选择链路（<code>/model</code> 显示的是什么）</h3>
+  <div class="flow">
+    <div class="step" style="border-left-color:#9f7aea;">
+      <div class="title">session.last_model</div>
+      <div class="file">.sessions/&lt;open_id&gt;.json</div>
+      <div class="desc"><code>opus</code>/<code>sonnet</code>/<code>haiku</code><br/><code>/model</code> 命令显示这个</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#ed8936;">
+      <div class="title">_run_claude(model=...)</div>
+      <div class="file">events.py</div>
+      <div class="desc">传给 send_and_wait<br/>无 last_model 时弹选择卡片</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#9f7aea;">
+      <div class="title">--model opus arg</div>
+      <div class="file">cli_loop _start_process</div>
+      <div class="desc">组装进子进程启动参数</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#f56565;">
+      <div class="title">env alias 映射</div>
+      <div class="file">ANTHROPIC_DEFAULT_OPUS_MODEL</div>
+      <div class="desc">opus → glm-5.2<br/>sonnet → glm-5.1 等</div>
+    </div>
+  </div>
+
+  <div class="diag">
+    <b>关键：</b>profile 顶层 <code>model</code> 字段<b>不参与决策</b>，只在 <code>/switch</code> 卡片那行"模型: xxx"显示。改它无效——要切 model 发 <code>/model sonnet</code>（更新 session.last_model）。<code>/model</code> 只接受纯 alias，带 <code>[1m]</code> 等后缀非法。
+  </div>
+
+  <h3>脆弱点</h3>
+  <div class="vulns">
+    <div class="vuln">
+      <span class="id">#3.1</span><span class="what">Windows CreateProcess 不补 .cmd</span>
+      <div class="why"><code>create_subprocess_exec("claude")</code> 在 Windows 抛 WinError 2。npm shim 是 <code>claude.CMD</code>，必须 <code>shutil.which</code> 解析。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#3.2</span><span class="what">CLAUDECODE 环境变量触发嵌套检测</span>
+      <div class="why">父 Claude Code 进程设了 CLAUDECODE，子进程拒绝启动。<code>_build_env</code> 必须 pop。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#3.3</span><span class="what">Windows 找不到 git-bash</span>
+      <div class="why">CLI 在 Windows 上必须有 git-bash 才能跑 shell。<code>_build_env</code> 探测候选路径设 CLAUDE_CODE_GIT_BASH_PATH。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#3.4</span><span class="what">CLI 2.1.71 stdin 不 close 不处理</span>
+      <div class="why">新版本要求 stdin EOF 才开始处理。<code>send_and_wait</code> 写完必须 <code>writer.close()</code>。失败 subtype 用 <code>startswith("error")</code> 匹配。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#3.5</span><span class="what">第二条消息 ConnectionResetError</span>
+      <div class="why">#3.4 副作用：close 后进程退出，但 <code>is_running</code> 看 returncode 还 None。需 <code>_consumed</code> set + <code>_teardown_previous</code> 拆旧 reader。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#3.7</span><span class="what">subprocess 默认 64KB 单行限制</span>
+      <div class="why"><code>tool_result</code> 含整文件内容时单行超 64KB → <code>ValueError: Separator not found</code>。<code>limit=10*1024*1024</code>。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#3.9</span><span class="what">/switch 双重"任务失败"</span>
+      <div class="why">cancel 触发的 future 用 status=failed 误导用户。改为 <code>cancelled</code>，<code>_run_claude</code> cancelled 静默 return。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#3.10</span><span class="what">配置隔离后未设 active profile → not logged in</span>
+      <div class="why"><code>--setting-sources project,local</code> 跳过 <code>~/.claude/settings.json</code>，凭证只来自 active profile。未 <code>/switch</code> 时 <code>load_active_profile_env()</code> 返回空 dict → 子进程报 <code>not logged in</code> 退出（code=1, cost=$0）。<code>main.py</code> lifespan 启动检查 + 飞书通知 <code>ALLOWED_USERS</code>。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#3.11</span><span class="what">profile 顶层 model 字段不参与决策</span>
+      <div class="why">子进程 model 来自 <code>session.last_model</code> → <code>--model</code> arg → env <code>ANTHROPIC_DEFAULT_*_MODEL</code> 映射。profile 的 <code>model</code> 字段只在 <code>/switch</code> 卡片显示用。改 profile 的 model <b>不会</b>改实际 model，要 <code>/model sonnet</code>。</div>
+    </div>
+  </div>
+
+  <div class="diag">
+    <b>排查入口：</b>
+    <code>FileNotFoundError: [WinError 2]</code> → #3.1；
+    CLI 1.5s 退出 + <code>text_len=0</code> → 看 <code>claude stderr:</code> 前缀日志（#3.2 #3.3 #3.4）；
+    第二条消息 <code>ConnectionResetError</code> → #3.5；
+    <code>Separator/chunk exceed the limit</code> → #3.7；
+    <code>not logged in</code> + <code>cost=$0 time=0s</code> → 未 <code>/switch</code> 选 profile（#3.10）；
+    改 profile 的 model 不生效 → 用 <code>/model</code> 命令（#3.11）。
+  </div>
+
+  <div class="bypass">
+    <b>架构原则（#3.6）：</b>
+    <code>--input-format stream-json</code> 必须配 <code>-p</code>，每条消息一个进程是固有行为。
+    <b>不要</b>尝试"去掉 -p 改长驻 stdin"——CLI 不支持。要长驻只能迁移到 Claude Agent SDK。
+  </div>
+</div>
+
+<!-- ============ ④ Claude CLI ============ -->
+<h2 class="theme-cli">④ Claude CLI 层</h2>
+
+<div class="section">
+  <div class="section-header" style="border-color: #f56565;">
+    <span class="section-num theme-cli">LAYER 4</span>
+    <span class="section-title">claude.CMD 子进程本身</span>
+    <span class="section-file">npm global bin · ~/.claude/projects/*/&lt;sid&gt;.jsonl</span>
+  </div>
+
+  <h3>stdin → stdout JSONL 流</h3>
+  <div class="flow">
+    <div class="step" style="border-left-color:#f56565;">
+      <div class="title">stdin: user 消息</div>
+      <div class="file">stream-json</div>
+      <div class="desc"><code>{"type":"user","message":{...}}</code></div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#f56565;">
+      <div class="title">claude 处理</div>
+      <div class="file">cwd=workspace</div>
+      <div class="desc">读 ~/.claude/projects/&lt;hash&gt;/&lt;sid&gt;.jsonl<br/>恢复历史（--resume/--continue）</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#f56565;">
+      <div class="title">stdout: JSONL 流</div>
+      <div class="file">stream-json</div>
+      <div class="desc">system/init → stream_event × N → assistant → result</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#f56565;">
+      <div class="title">stderr: 错误</div>
+      <div class="file">_drain_stderr</div>
+      <div class="desc">CLI 启动失败的真错误<br/>不是 stdout JSONL</div>
+    </div>
+  </div>
+
+  <h3>stdout 事件分发</h3>
+  <div class="jsonl">
+<span class="c">// 1. system/init — 拿 session_id 注册 session_registry</span>
+{<span class="k">"type"</span>:<span class="s">"system"</span>,<span class="k">"subtype"</span>:<span class="s">"init"</span>,<span class="k">"session_id"</span>:<span class="s">"282db91b-..."</span>}
+
+<span class="c">// 2. stream_event — 累积 text_delta，每 500ms 更新卡片</span>
+{<span class="k">"type"</span>:<span class="s">"stream_event"</span>,<span class="k">"event"</span>:{<span class="k">"delta"</span>:{<span class="k">"type"</span>:<span class="s">"text_delta"</span>,<span class="k">"text"</span>:<span class="s">"你"</span>}}}
+
+<span class="c">// 3. assistant — 工具调用块</span>
+{<span class="k">"type"</span>:<span class="s">"assistant"</span>,<span class="k">"message"</span>:{<span class="k">"content"</span>:[{<span class="k">"type"</span>:<span class="s">"tool_use"</span>,<span class="k">"name"</span>:<span class="s">"Bash"</span>,...}]}}
+
+<span class="c">// 4. result — 解析最老 future，更新最终卡片</span>
+{<span class="k">"type"</span>:<span class="s">"result"</span>,<span class="k">"result"</span>:<span class="s">"你好！"</span>,<span class="k">"usage"</span>:{<span class="k">"input_tokens"</span>:150},...}
+
+<span class="c">// ❌ 失败时 subtype 是 error_during_execution，不是 "error"</span>
+{<span class="k">"type"</span>:<span class="s">"result"</span>,<span class="k">"subtype"</span>:<span class="s">"error_during_execution"</span>,...}  <span class="c">// 必须 startswith("error") 匹配</span>
+  </div>
+
+  <h3>脆弱点</h3>
+  <div class="vulns">
+    <div class="vuln">
+      <span class="id">#4.1</span><span class="what">CLI 启动失败时空白卡片</span>
+      <div class="why">错误在 stderr 不在 stdout JSONL。必须 <code>_drain_stderr</code> 后台读取并展示给用户。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#4.2</span><span class="what">session 与 workspace 绑定</span>
+      <div class="why">session 在创建时与 cwd 绑定。<code>/pwd</code> 切换 workspace 必须清空 claude_session_id，否则跨目录 resume crash。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#4.3</span><span class="what">GLM SSE 流无超时</span>
+      <div class="why">第三方 API 可能不发 <code>[DONE]</code> 或 <code>finish_reason</code>，<code>aiter_lines()</code> 无限等待。必须 read timeout + 异常断开兜底。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#4.4</span><span class="what">Windows GBK vs UTF-8</span>
+      <div class="why">默认 GBK 解码 claude 输出会乱码。统一 <code>decode("utf-8", errors="replace")</code>。</div>
+    </div>
+  </div>
+
+  <div class="diag">
+    <b>排查入口：</b>
+    CLI 无输出 → 看 <code>claude stderr:</code>（#4.1）；
+    手动验证 → PowerShell <code>echo '你好' | claude -p --output-format stream-json</code>；
+    CLI 自己的 debug 日志 → <code>~/.claude/debug/</code>；
+    真实对话历史 → <code>~/.claude/projects/&lt;encoded-workspace&gt;/&lt;sid&gt;.jsonl</code>。
+  </div>
+</div>
+
+<!-- ============ ⑤ 飞书卡片 ============ -->
+<h2 class="theme-card">⑤ 飞书卡片层</h2>
+
+<div class="section">
+  <div class="section-header" style="border-color: #48bb78;">
+    <span class="section-num theme-card">LAYER 5</span>
+    <span class="section-title">流式卡片 + SDK 响应类</span>
+    <span class="section-file">app/feishu/cards.py + client.py</span>
+  </div>
+
+  <h3>流式更新时序</h3>
+  <div class="flow">
+    <div class="step" style="border-left-color:#48bb78;">
+      <div class="title">build_streaming_card</div>
+      <div class="file">send_and_wait 开头</div>
+      <div class="desc">POST 创建空卡片<br/>拿 message_id</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#48bb78;">
+      <div class="title">update_card × N</div>
+      <div class="file">_read_loop</div>
+      <div class="desc">now - last_update ≥ 0.5s<br/>节流避免限流</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#48bb78;">
+      <div class="title">≥3000 字开新卡</div>
+      <div class="file">cli_loop.py</div>
+      <div class="desc">旧卡标 continued=true<br/>新卡继续流</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#48bb78;">
+      <div class="title">result → 最终卡片</div>
+      <div class="file">build_tool_result_card</div>
+      <div class="desc">耗时/token/费用/工具数</div>
+    </div>
+  </div>
+
+  <h3>SDK 响应类构造对比</h3>
+  <table>
+    <tr><th>写法</th><th>结果</th></tr>
+    <tr>
+      <td><code>P2CardActionTriggerResponse(toast=t)</code></td>
+      <td>❌ TypeError 被 SDK 吞掉 → 飞书收到格式异常 → <code>code 200671</code></td>
+    </tr>
+    <tr>
+      <td><code>resp = P2CardActionTriggerResponse(); resp.toast = t</code></td>
+      <td>✅ 正确：先创建空对象再赋值</td>
+    </tr>
+    <tr>
+      <td><code>CallBackToast(content="ok")</code></td>
+      <td>❌ 同上，只接受 dict(<code>d</code>) 参数</td>
+    </tr>
+  </table>
+
+  <h3>脆弱点</h3>
+  <div class="vulns">
+    <div class="vuln">
+      <span class="id">#5.1</span><span class="what">SDK 响应类不能关键字构造</span>
+      <div class="why"><code>P2CardActionTriggerResponse</code>/<code>CallBackToast</code> <code>__init__</code> 不收 kwargs。TypeError 被吞 → 飞书报 200671，但审批逻辑其实成功了。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#5.2</span><span class="what">send_card 静默吞错</span>
+      <div class="why">API 返回 code≠0 时只打日志不抛异常，调用方 <code>await future</code> 永远等一个未送达的卡片。必须抛异常 + token 刷新重试。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#5.3</span><span class="what">内置权限先于 hook</span>
+      <div class="why">Claude Code 权限层级：<b>内置权限 → PreToolUse hook → 工具执行</b>。permissions 现由 <code>config/claude_settings.json</code> 提供（<code>--settings</code> 加载，含 <code>Bash(*)/Write(*)/Edit(*)</code> 等 allow）。文件缺失或 allow 不全 → Write/Edit 默认拒绝，hook 不触发。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#5.4</span><span class="what">hook 配置位置（已隔离）</span>
+      <div class="why">hook 配置在 <code>config/claude_settings.json</code>（openclaw 自有，<code>--settings</code> 显式加载），<b>不</b>写 workspace 的 <code>.claude/</code>。workspace 旧版本注入的 hook 残留由 <code>_strip_openclaw_hooks</code> 按 pre_tool_use.py 脚本路径清理。</div>
+    </div>
+  </div>
+
+  <div class="diag">
+    <b>排查入口：</b>
+    点审批按钮报 200671 → 响应类构造方式（#5.1）；
+    卡片不出现但代码看似正常 → <code>send_card</code> 是否静默失败（#5.2）；
+    claude 说"需要授权"但 hook 没触发 → <code>config/claude_settings.json</code> 缺 <code>permissions.allow</code> 或文件没生成（#5.3）。
+  </div>
+</div>
+
+<!-- ============ ⑥ Hook 审批 ============ -->
+<h2 class="theme-hook">⑥ Hook 审批层</h2>
+
+<div class="section">
+  <div class="section-header" style="border-color: #d69e2e;">
+    <span class="section-num theme-hook">LAYER 6</span>
+    <span class="section-title">PreToolUse 跨进程审批链</span>
+    <span class="section-file">app/hooks/router.py + scripts/hooks/pre_tool_use.py</span>
+  </div>
+
+  <h3>跨进程往返流程（m/l 模式触发）</h3>
+  <div class="flow">
+    <div class="step" style="border-left-color:#d69e2e;">
+      <div class="title">claude 工具调用</div>
+      <div class="file">PreToolUse 事件</div>
+      <div class="desc">触发 settings.local.json<br/>注册的 hook</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#d69e2e;">
+      <div class="title">pre_tool_use.py</div>
+      <div class="file">scripts/hooks/</div>
+      <div class="desc">stdin 读工具信息<br/>HTTP POST → FastAPI</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#d69e2e;">
+      <div class="title">hooks/router.py</div>
+      <div class="file">/hooks/pre_tool_use</div>
+      <div class="desc">session_registry 查 open_id<br/>Bash 风险分析</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#d69e2e;">
+      <div class="title">approval_manager</div>
+      <div class="file">app/approval/</div>
+      <div class="desc">发飞书审批卡片<br/>await Future（阻塞）</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#d69e2e;">
+      <div class="title">用户点击</div>
+      <div class="file">card.action.trigger</div>
+      <div class="desc">resolve Future<br/>HTTP 响应回 hook</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-left-color:#d69e2e;">
+      <div class="title">hook stdout</div>
+      <div class="file">JSON 决策</div>
+      <div class="desc">{allow: true/false}<br/>claude 拿到决策</div>
+    </div>
+  </div>
+
+  <h3>Bash 命令风险分类（mode m）</h3>
+  <table>
+    <tr><th>类别</th><th>示例</th><th>处理</th></tr>
+    <tr><td>LOW（白名单）</td><td><code>ls</code>, <code>cat</code>, <code>grep</code>, <code>git status</code>, <code>pip list</code></td><td>自动放行</td></tr>
+    <tr><td>HIGH（关键字）</td><td><code>rm</code>, <code>git push</code>, <code>pip install</code>, <code>chmod</code>, <code>curl -X POST</code></td><td>需审批</td></tr>
+    <tr><td>HIGH（中文）</td><td>修改/删除/新建/推送/部署/编辑</td><td>需审批（正则不需 <code>\b</code>）</td></tr>
+    <tr><td>未知命令</td><td>—</td><td><b>默认 HIGH</b>（安全优先）</td></tr>
+    <tr><td>命令链</td><td><code>cmd1 && cmd2</code> / <code>; </code> / <code>|</code></td><td>只检查第一段</td></tr>
+  </table>
+
+  <h3>脆弱点</h3>
+  <div class="vulns">
+    <div class="vuln">
+      <span class="id">#6.1</span><span class="what">审批通过后 IndexError</span>
+      <div class="why"><code>ToolCallRecord</code> 只在跳过审批分支创建，通过/拒绝分支漏了。统一在审批后创建 record。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#6.2</span><span class="what">risk_level str vs enum</span>
+      <div class="why">router 传 <code>"high"</code>（字符串），manager 调 <code>.value</code> → AttributeError。用 <code>hasattr(risk_level, "value")</code> 兼容。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#6.3</span><span class="what">run_command 整体 HIGH</span>
+      <div class="why"><code>ls</code> 和 <code>rm -rf</code> 同走审批 → 体验差。必须命令级分类，未知默认 HIGH。</div>
+    </div>
+    <div class="vuln">
+      <span class="id">#6.4</span><span class="what">DeepSeek 错误静默降级</span>
+      <div class="why"><code>except</code> 只 logger.warning。返回 error_message 字段，events.py 通知用户。</div>
+    </div>
+  </div>
+
+  <div class="bypass">
+    <b>审批卡片不出现的三步排查：</b><br/>
+    ① <code>config/claude_settings.json</code> 已生成且含 <code>permissions.allow</code>（让内置权限放行，否则 hook 不触发 #5.3）<br/>
+    ② <code>send_card</code> 抛异常而非静默（#5.2）<br/>
+    ③ hook_log 有记录（确认 hook 脚本被调用）
+  </div>
+
+  <div class="diag">
+    <b>排查入口：</b>
+    审批后 <code>IndexError</code> → #6.1；
+    卡片发送前 <code>AttributeError: 'str' has no .value</code> → #6.2；
+    只读命令也审批 → #6.3；
+    服务无法 Ctrl+C → Future 没超时兜底（#1.3）。
+  </div>
+</div>
+
+<!-- ============ 错误→分块反查表 ============ -->
+<h2 style="background:#2d3748;">错误信息 → 分块反查表</h2>
+
+<div class="section">
+  <h3 style="margin-top:0;">从错误信息快速定位到分块</h3>
+  <table>
+    <tr><th>错误信息 / 现象</th><th>分块</th><th>编号</th></tr>
+    <tr><td><code>FileNotFoundError: [WinError 2]</code></td><td>③ 子进程管理</td><td>#3.1</td></tr>
+    <tr><td><code>Separator not found, chunk exceed the limit</code></td><td>③ 子进程管理</td><td>#3.7</td></tr>
+    <tr><td><code>ConnectionResetError: Connection lost</code></td><td>③ 子进程管理</td><td>#3.5</td></tr>
+    <tr><td><code>not logged in</code> + <code>cost=$0</code></td><td>③ 子进程管理</td><td>#3.10</td></tr>
+    <tr><td>改 profile 的 model 不生效</td><td>③ 子进程管理</td><td>#3.11</td></tr>
+    <tr><td><code>await outside async function</code> (SyntaxError)</td><td>② 事件路由</td><td>#2.8</td></tr>
+    <tr><td><code>AttributeError: 'str' has no attribute 'value'</code></td><td>⑥ Hook 审批</td><td>#6.2</td></tr>
+    <tr><td><code>IndexError: list index out of range</code>（审批后）</td><td>⑥ Hook 审批</td><td>#6.1</td></tr>
+    <tr><td>飞书 <code>code 200340</code></td><td>① 飞书 WS</td><td>#1.2</td></tr>
+    <tr><td>飞书 <code>code 200671</code></td><td>⑤ 飞书卡片</td><td>#5.1</td></tr>
+    <tr><td>飞书 <code>code 99991663</code></td><td>⑤ 飞书卡片</td><td>#5.2（token 过期）</td></tr>
+    <tr><td>CLI 1.5s 退出 + <code>text_len=0</code></td><td>③/④ 子进程+CLI</td><td>#3.2 #3.3 #4.1</td></tr>
+    <tr><td>"Claude Code cannot be launched inside another..."</td><td>③ 子进程管理</td><td>#3.2</td></tr>
+    <tr><td>"requires git-bash"</td><td>③ 子进程管理</td><td>#3.3</td></tr>
+    <tr><td>"Sorry, you are not authorized..."</td><td>② 事件路由</td><td>#2.3</td></tr>
+    <tr><td>中文乱码 <code>褰撳墠...</code></td><td>④ Claude CLI</td><td>#4.4</td></tr>
+    <tr><td>WS 连上但收不到消息</td><td>① 飞书 WS</td><td>#1.1</td></tr>
+    <tr><td>Ctrl+C 无法停止服务</td><td>①/⑥ WS+Hook</td><td>#1.3</td></tr>
+    <tr><td>卡片不出现但代码看似正常</td><td>⑤ 飞书卡片</td><td>#5.2</td></tr>
+    <tr><td>claude 说"需要授权"但 hook 没触发</td><td>⑤ 飞书卡片</td><td>#5.3</td></tr>
+    <tr><td><code>/model opus</code> 返回审批帮助</td><td>② 事件路由</td><td>#2.2</td></tr>
+  </table>
+
+  <div class="diag" style="margin-top:16px;">
+    <b>详细排查步骤见</b> <code>TROUBLESHOOTING.md</code>，编号一一对应。
+  </div>
+</div>
+
+</body>
+</html>

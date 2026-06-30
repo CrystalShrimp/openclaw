@@ -1,0 +1,18 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "<your-kimi-token>",
+    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic",
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-k2-turbo-preview",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2.5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "kimi-k2.6"
+  },
+  "permissions": {
+    "allow": ["Bash(*)", "Write(*)", "Edit(*)", "NotebookEdit(*)", "Read(*)", "Glob(*)", "Grep(*)", "WebSearch", "WebFetch"],
+    "deny": []
+  },
+  "model": "opus[1m]",
+  "skipDangerousModePermissionPrompt": true
+}

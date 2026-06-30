@@ -1,0 +1,66 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "<your-deepseek-token>",
+    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Write(*)",
+      "Edit(*)",
+      "NotebookEdit(*)",
+      "Read(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": []
+  },
+  "model": "opus[1m]",
+  "extraKnownMarketplaces": {
+    "claude-notification": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/Oreo992/claude-notification.git"
+      }
+    }
+  },
+  "skipDangerousModePermissionPrompt": true,
+  "enabledPlugins": {
+    "windows@claude-notification": true
+  },
+  "claudeCode.environmentVariables": [
+    {
+      "name": "ANTHROPIC_BASE_URL",
+      "value": "https://api.deepseek.com/anthropic"
+    },
+    {
+      "name": "ANTHROPIC_AUTH_TOKEN",
+      "value": "<your-deepseek-token>"
+    },
+    {
+      "name": "ANTHROPIC_MODEL",
+      "value": "deepseek-v4-pro"
+    },
+    {
+      "name": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "value": "deepseek-v4-pro"
+    },
+    {
+      "name": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "value": "deepseek-v4-pro"
+    },
+    {
+      "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "value": "deepseek-v4-flash"
+    }
+  ],
+  "claudeCode.disableLoginPrompt": true
+}
