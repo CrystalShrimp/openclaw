@@ -59,9 +59,9 @@ cp .env.example .env
 
 ### 5. 创建供应商 Profile
 
-OpenClaw 通过 `~/.claude/settings_<name>.json` 管理多个 API 供应商（GLM、Kimi、DeepSeek 等）。每个文件是完整的 claude 配置，**核心是 `env` 字段**，会被注入到子进程环境变量。
+OpenClaw 通过 `config/settings_<name>.json` 管理多个 API 供应商（GLM、Kimi、DeepSeek 等），和 `config/settings.py` 同目录。每个文件是完整的 claude 配置，**核心是 `env` 字段**，会被注入到子进程环境变量。仓库里附带 `config/settings_<name>.example.json` 模板可参考。
 
-`~/.claude/settings_glm.json` 示例：
+`config/settings_glm.json` 示例：
 
 ```json
 {
@@ -71,11 +71,14 @@ OpenClaw 通过 `~/.claude/settings_<name>.json` 管理多个 API 供应商（GL
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4-flash",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4-air",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-4-plus"
-  }
+  },
+  "model": "opus[1m]"
 }
 ```
 
-在飞书里用 `/switch` 命令切换。切换后只影响**新启动**的 openclaw 子进程，**不污染 `~/.claude/settings.json`**（不再拷贝文件）。
+> 顶层 `model` 字段**仅用于 `/switch` 卡片显示**，不参与子进程模型决策（决策链见下文「模型选择链路」）。
+
+在飞书里用 `/switch` 命令切换。切换后只影响**新启动**的 openclaw 子进程，**完全不读写 `~/.claude/settings.json`**：profile 文件、active 标记、openclaw 自有 settings 都集中在 `config/` 下，子进程 args 加 `--setting-sources project,local` 排除用户级。
 
 ### 6. 启动
 
@@ -83,7 +86,9 @@ OpenClaw 通过 `~/.claude/settings_<name>.json` 管理多个 API 供应商（GL
 uv run python -m app.main
 ```
 
-启动后日志会打印：默认 workspace、允许的用户列表、Claude CLI 路径、WS 连接状态。
+启动后日志会打印：默认 workspace、允许的用户列表、Claude CLI 路径、WS 连接状态、**active profile**。
+
+> **首次启动**：`config/active_profile` 还不存在时，lifespan 会向所有 `ALLOWED_USERS` 发飞书消息提示 `/switch` 选 profile；不选的话发任何消息子进程都会报 `not logged in`。
 
 ---
 
@@ -93,10 +98,10 @@ uv run python -m app.main
 
 | 命令 | 功能 | 实现要点 |
 |---|---|---|
-| `/start` `/new` | 重置会话 | `reset_user_session` + kill 当前 CLI 进程；下次消息开**新会话**（不传 `--continue`） |
+| `/new` | 重置会话 | `reset_user_session`（保留当前 workspace）+ kill 当前 CLI 进程；下次消息开**新会话**（不传 `--continue`） |
 | `/stop` | 中断当前子进程 | `cancel_and_wait`；pending future 标记为 `cancelled` |
 | `/status` | 查看会话状态 | 显示 session_id、claude_session_id、workspace、模型、profile、**消息数（读 claude jsonl）**、上下文用量 |
-| `/switch` | 切换 API 供应商 | 写 `~/.openclaw_active_profile` 标记文件 → kill 进程 → 测连通 |
+| `/switch [name]` | 切换 API 供应商 | 写 `config/active_profile` 标记文件 → kill 进程 → 测连通；带 name 直接切，不带则弹选择卡片 |
 | `/model haiku\|sonnet\|opus` | 切换模型 | 写 `session.last_model` → kill 进程 → 自动重跑上一条 user 消息 |
 | `/mode h\|m\|l` | 切换审批模式 | `h` 模式启动 claude 时加 `--permission-mode bypassPermissions` |
 | `/pwd <path\|shortcut>` | 切换工作区 | 清空 `claude_session_id`（换 workspace 不能 continue） |
@@ -113,7 +118,7 @@ uv run python -m app.main
 1. **有 `last_model`**（`/model` 设过或之前选过）→ 直接用，跳过选择卡片
 2. **首次消息**（无 last_model 且进程未启动）→ 弹模型选择卡片 → 用户选 → 执行
 3. **失败** → 清空 `session.claude_session_id`，下次开新会话（避免 `--continue` 到坏 session）
-4. **进程被取消**（`/switch`/`/stop`/`/start`）→ 返回 `cancelled`，静默退出
+4. **进程被取消**（`/switch`/`/stop`/`/new`）→ 返回 `cancelled`，静默退出
 
 ---
 
@@ -152,7 +157,7 @@ asyncio.get_running_loop().create_task(
      ▼
 _dispatch 内部 if/elif 链匹配命令         # 命令路由表
      │
-     ├─ 系统命令 (/start, /status, /model...) → 直接处理，return
+     ├─ 系统命令 (/new, /status, /model...) → 直接处理，return
      │
      └─ 普通文本 / /continue / /resume → _run_claude()
                                               │
@@ -174,7 +179,7 @@ _dispatch 内部 if/elif 链匹配命令         # 命令路由表
 1. 检查 per-user Lock（同一用户同时只能跑一个 claude）
 2. `shutil.which(cli_path)` 解析可执行文件路径（Windows 找到 `claude.CMD`）
 3. `_build_env(workspace)` 复制环境变量 + 注入 active profile 的 env vars
-4. `_ensure_hook_config(workspace)` 注入 PreToolUse hook 到 `workspace/.claude/settings.local.json`
+4. `_ensure_hook_config(workspace)` 幂等覆写 `config/claude_settings.json`（permissions + PreToolUse hook + `skipDangerousModePermissionPrompt`），同时清理 workspace 与 openclaw 项目下 `.claude/settings.local.json` 里旧版本注入过的 hook
 5. `create_subprocess_exec` 启动 claude 进程
 6. 启动 stderr 后台读取 task
 7. `while True: readline() → json.loads → 按事件类型分发`
@@ -190,6 +195,11 @@ args = [
     "--input-format", "stream-json",    # stdin 也走 JSONL
     "--verbose",
     "--include-partial-messages",       # 包含部分消息（实时流）
+    # 隔离 desktop 端 ~/.claude/settings.json：只加载 project+local 级
+    # （用户真实项目的配置该尊重），再用 --settings 显式叠加 openclaw 自有配置
+    # （hook + permissions + skipDangerousModePermissionPrompt），优先级最高
+    "--setting-sources", "project,local",
+    "--settings", "config/claude_settings.json",
 ]
 # 会话恢复（原生）
 if resume_session_id:
@@ -203,6 +213,16 @@ if approval_mode == "h":
 if chosen_model:
     args.extend(["--model", chosen_model])
 ```
+
+### 模型选择链路
+
+子进程最终用的模型由三条路径决定，优先级从高到低：
+
+1. **`session.last_model`**（`/model haiku|sonnet|opus` 设过，或上次选过）→ 直接作为 `--model` 参数，覆盖一切
+2. **profile env 别名映射**（`config/settings_<active>.json` 的 `ANTHROPIC_DEFAULT_HAIKU/SONNET/OPUS_MODEL`）→ claude 把 `--model sonnet` 这类别名翻译成具体型号
+3. **profile 顶层 `model` 字段**：**仅用于 `/switch` 卡片显示**，不参与决策
+
+所以"改 profile 的 `model` 字段不生效"是预期行为；想改默认模型用 `/model` 或调 env 里的别名映射。
 
 ---
 
@@ -259,11 +279,11 @@ claude 子进程的 stderr 不直接落盘，而是由 `cli_loop.py` 的 `_drain
 - **内容**：session_id、claude_session_id、workspace、approval_mode、last_model、context_tokens
 - **claude 真实对话历史**：在 `~/.claude/projects/<encoded-workspace>/<claude_session_id>.jsonl`，由 claude 自己管理
 
-### 5. profile 切换标记 `~/.openclaw_active_profile`
+### 5. profile 切换标记 `config/active_profile`
 
-- **位置**：`~/.openclaw_active_profile`（单行文本，内容是 active profile 名）
+- **位置**：`config/active_profile`（单行文本，内容是 active profile 名）
 - **用途**：`_build_env` 读它来决定注入哪个 profile 的 env vars
-- **错误表现**：内容为空或指向不存在的 profile → `get_active_profile()` 返回 `"unknown"`，子进程不注入 `ANTHROPIC_*`，claude 会回退到 `~/.claude/settings.json`
+- **错误表现**：内容为空或指向不存在的 profile → `get_active_profile()` 返回 `"unknown"`，子进程不注入 `ANTHROPIC_*`，claude 又因 `--setting-sources project,local` 排除了 desktop 端 → 报 `not logged in`（启动时 lifespan 会主动向 `ALLOWED_USERS` 提示）
 
 ### 6. 飞书 API 日志
 
@@ -333,24 +353,25 @@ result 事件 → feishu_client.update_card(card_id, build_tool_result_card(...)
 
 ---
 
-## 五、Profile 切换（`app/profiles.py`）
+## 五、Profile 切换与配置隔离（`app/profiles.py` + `app/agent/cli_loop.py`）
 
-支持多个 API 供应商（GLM、Kimi、DeepSeek 等）。**完全不修改 `~/.claude/settings.json`**，机制如下：
+支持多个 API 供应商（GLM、Kimi、DeepSeek 等）。**子进程完全不加载 desktop 端 `~/.claude/settings.json`** —— 靠 args 加 `--setting-sources project,local` 排除用户级。所有 openclaw 自有配置集中在 `config/` 目录：
 
 | 文件/对象 | 作用 |
 |---|---|
-| `~/.claude/settings_<name>.json` | profile 定义（含 `env` 字段） |
-| `~/.openclaw_active_profile` | 标记当前 active profile 名（单行文本） |
+| `config/settings_<name>.json` | profile 定义（含 `env` 字段） |
+| `config/active_profile` | 标记当前 active profile 名（单行文本） |
+| `config/claude_settings.json` | openclaw 自有 claude 配置（permissions + PreToolUse hook + `skipDangerousModePermissionPrompt`），每次 spawn 前幂等覆写 |
 | `load_active_profile_env()` | 读 active profile 的 `env` 字段返回 dict |
 | `_build_env(workspace)` | 调 `load_active_profile_env()` 注入子进程环境 |
 
 **切换流程**：
 
 ```
-用户点 /switch 卡片 → switch_profile(name)
+用户点 /switch 卡片（或 /switch <name>）→ switch_profile(name)
                           │
                           ▼ 不拷贝文件，只写标记
-                  ~/.openclaw_active_profile = "glm"
+                  config/active_profile = "glm"
                           │
                           ▼ kill 当前 CLI 进程
                   claude_cli_loop.cancel_by_user(open_id)
@@ -361,6 +382,8 @@ result 事件 → feishu_client.update_card(card_id, build_tool_result_card(...)
                           ▼ 下次用户发消息时
                   _build_env() 注入 ANTHROPIC_BASE_URL 等
                   → 新 claude 子进程用新 profile
+                  （--setting-sources project,local 跳过 ~/.claude/settings.json
+                    --settings config/claude_settings.json 叠加 openclaw 配置）
 ```
 
 `test_profile()` 直接用将要注入的 env 测试，验证的就是 claude 实际看到的环境，与全局 `settings.json` 无关。
@@ -392,7 +415,7 @@ claude 工具调用 → PreToolUse hook → pre_tool_use.py → HTTP POST /hooks
                                                             hook stdout 返回决策给 claude
 ```
 
-**Hook 注入位置**：`workspace/.claude/settings.local.json`（claude 原生的本地覆盖，**不覆盖用户的 `settings.json`**）。claude 合并 settings 时把 openclaw 的 hook 与用户自己的合并。
+**Hook 注入位置**：`config/claude_settings.json`（openclaw 自有，每次 spawn 前幂等覆写，通过 `--settings` 加载，优先级最高）。同时 `_strip_openclaw_hooks` 会清理旧版本注入到 `workspace/.claude/settings.local.json` 里的 hook 条目——按脚本路径匹配，不会误删用户自配的 hook。
 
 **三级审批模式**：
 
@@ -428,7 +451,7 @@ claude 工具调用 → PreToolUse hook → pre_tool_use.py → HTTP POST /hooks
 长时间 `--continue` 后上下文会满。每次任务完成时从 `result.usage.input_tokens` 拿到当前上下文大小：
 
 - ≥ 80%：完成通知追加警告，建议 `/compact`
-- ≥ 95%：建议 `/start` 新会话
+- ≥ 95%：建议 `/new` 新会话
 - `/status` 实时显示百分比
 
 ---
@@ -490,9 +513,15 @@ asyncio.get_running_loop().create_task(...)
 
 ```
 openclaw/
-├── config/settings.py        # 配置管理（pydantic-settings）
+├── config/                   # openclaw 应用自有配置（与 desktop ~/.claude/ 隔离）
+│   ├── settings.py           #   .env / 系统配置（pydantic-settings）
+│   ├── settings_<name>.json  #   API 供应商 profile（env + 显示用 model 字段）
+│   ├── settings_<name>.example.json  #   profile 模板
+│   ├── claude_settings.json  #   子进程加载的 openclaw 配置（permissions + hook，代码生成）
+│   ├── active_profile        #   当前 active profile 名（单行文本，/switch 写）
+│   └── shortcuts.json        #   /pwd 快捷方式映射
 ├── app/
-│   ├── main.py               # FastAPI 入口 + WS 长连接
+│   ├── main.py               # FastAPI 入口 + WS 长连接 + 启动时 profile 检查
 │   ├── profiles.py           # API 供应商 profile 切换（标记文件 + env 注入）
 │   ├── feishu/               # 飞书集成
 │   │   ├── client.py         # 飞书 API 客户端
@@ -500,7 +529,7 @@ openclaw/
 │   │   ├── cards.py          # 卡片模板（流式/审批/模型选择/profile切换）
 │   │   └── ws.py             # WebSocket 长连接（子类化 WsClient）
 │   ├── agent/                # Agent 执行层
-│   │   └── cli_loop.py       # Claude CLI 子进程管理 + JSONL 事件解析
+│   │   └── cli_loop.py       # Claude CLI 子进程管理 + JSONL 事件解析 + 配置隔离
 │   ├── approval/             # 审批流程
 │   │   └── manager.py        # 审批状态机（Future + 超时）
 │   ├── audit/                # 审计日志

@@ -324,7 +324,7 @@
   <h3>命令路由表</h3>
   <table>
     <tr><th>分支</th><th>处理</th><th>脆弱点</th></tr>
-    <tr><td><code>/start</code> <code>/new</code></td><td>reset session + kill 进程</td><td>#2.11 不能继承旧 workspace</td></tr>
+    <tr><td><code>/new</code></td><td>reset session + kill 进程（保留 workspace）</td><td>#2.11 要继承旧 workspace</td></tr>
     <tr><td><code>/stop</code> 停止</td><td>cancel_by_user(open_id)</td><td>#3.8 不能用 session.current_task_id</td></tr>
     <tr><td><code>/status</code></td><td>显示 session 状态</td><td>—</td></tr>
     <tr><td><code>/switch</code></td><td>切 profile + kill</td><td>#3.9 双重"任务失败"（status 语义）</td></tr>

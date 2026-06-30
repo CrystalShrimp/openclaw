@@ -25,7 +25,7 @@
         <mxCell id="8" value="_dispatch()&#xa;命令路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1;" vertex="1" parent="1">
           <mxGeometry x="530" y="200" width="140" height="50" as="geometry"/>
         </mxCell>
-        <mxCell id="9" value="/start /stop /status /model /mode /pwd /resume /continue" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;spacingLeft=5;" vertex="1" parent="1">
+        <mxCell id="9" value="/new /stop /status /model /mode /pwd /resume /continue" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;spacingLeft=5;" vertex="1" parent="1">
           <mxGeometry x="720" y="150" width="230" height="40" as="geometry"/>
         </mxCell>
         <mxCell id="10" value="_run_claude()&#xa;路径A: 手动model&#xa;路径B: 首次&gt;分类&gt;审批&#xa;路径C: resume恢复" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">

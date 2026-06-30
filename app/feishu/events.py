@@ -176,10 +176,14 @@ class SessionManager:
             old = self._sessions.pop(old_sid, None)
             chat_id = old.chat_id if old else ""
             mode = old.approval_mode if old else settings.approval_mode
+            # 继承当前 workspace：/new 语义是"同一项目里开新会话"，不是回到 default。
+            # 想换 workspace 用 /pwd。首次没有旧 session 时回落到 default。
+            workspace = old.workspace if old else None
         else:
             chat_id = ""
             mode = settings.approval_mode
-        session = self.create_session(open_id, chat_id)
+            workspace = None
+        session = self.create_session(open_id, chat_id, workspace=workspace)
         session.approval_mode = mode
         self._save(session)
         return session
@@ -377,18 +381,6 @@ async def _dispatch(open_id: str, chat_id: str, message_id: str, text: str) -> N
     text = text.strip()
     text_lower = text.lower()
 
-    # --- /start: reset session (kill process + fresh session) ---
-    if text_lower == "/start":
-        await claude_cli_loop.cancel_and_wait(open_id)
-        session = session_manager.reset_user_session(open_id)
-        await feishu_client.send_text(
-            open_id,
-            f"新会话已创建。\n会话ID: `{session.session_id}`\n"
-            f"工作区: `{session.workspace}`\n"
-            f"审批模式: {_mode_label(session.approval_mode)}",
-        )
-        return
-
     # --- /stop: interrupt current task ---
     if text_lower in ("/stop", "停止"):
         cancelled = await claude_cli_loop.cancel_and_wait(open_id)
@@ -411,9 +403,9 @@ async def _dispatch(open_id: str, chat_id: str, message_id: str, text: str) -> N
                 )
                 if pct >= settings.context_critical_percent:
                     if settings.compact_enabled:
-                        ctx_info += "⚠️ 上下文即将耗尽，建议使用 `/compact` 压缩或 `/start` 开始新会话\n"
+                        ctx_info += "⚠️ 上下文即将耗尽，建议使用 `/compact` 压缩或 `/new` 开始新会话\n"
                     else:
-                        ctx_info += "⚠️ 上下文即将耗尽，建议使用 `/start` 开始新会话\n"
+                        ctx_info += "⚠️ 上下文即将耗尽，建议使用 `/new` 开始新会话\n"
                 elif pct >= settings.context_warn_percent:
                     if settings.compact_enabled:
                         ctx_info += "⚠️ 上下文用量较高，可以用 `/compact` 压缩上下文\n"
@@ -432,7 +424,7 @@ async def _dispatch(open_id: str, chat_id: str, message_id: str, text: str) -> N
                 f"状态: {session.status.value}",
             )
         else:
-            await feishu_client.send_text(open_id, "没有活跃会话。用 /start 创建新会话。")
+            await feishu_client.send_text(open_id, "没有活跃会话。用 /new 创建新会话。")
         return
 
     # --- /switch [profile]: switch provider profile (GLM, Kimi, etc.) ---
@@ -628,13 +620,15 @@ async def _dispatch(open_id: str, chat_id: str, message_id: str, text: str) -> N
         await _run_claude(prompt, open_id, session, skip_classify=True)
         return
 
-    # --- /new: alias for /start ---
+    # --- /new: reset session (kill process + fresh session, keep workspace) ---
     if text_lower == "/new":
         await claude_cli_loop.cancel_and_wait(open_id)
         session = session_manager.reset_user_session(open_id)
         await feishu_client.send_text(
             open_id,
-            f"新会话已创建。\n会话ID: `{session.session_id}`",
+            f"新会话已创建。\n会话ID: `{session.session_id}`\n"
+            f"工作区: `{session.workspace}`\n"
+            f"审批模式: {_mode_label(session.approval_mode)}",
         )
         return
 
@@ -810,7 +804,7 @@ async def _run_claude(
             resume_session_id=resume_session_id,
         )
 
-        # Process was killed (switch/stop/start) — caller already notified user
+        # Process was killed (switch/stop/new) — caller already notified user
         if agent_result.status == "cancelled":
             return
 
@@ -834,12 +828,12 @@ async def _run_claude(
                 if settings.compact_enabled:
                     ctx_warning = (
                         f"\n\n🚨 **上下文已用 {ctx_pct:.0f}%，即将耗尽！**\n"
-                        f"使用 `/compact` 压缩上下文继续对话，或 `/start` 开始全新会话。"
+                        f"使用 `/compact` 压缩上下文继续对话，或 `/new` 开始全新会话。"
                     )
                 else:
                     ctx_warning = (
                         f"\n\n🚨 **上下文已用 {ctx_pct:.0f}%，即将耗尽！**\n"
-                        f"请使用 `/start` 开始新会话，否则后续对话可能报错。"
+                        f"请使用 `/new` 开始新会话，否则后续对话可能报错。"
                     )
             elif ctx_pct >= settings.context_warn_percent:
                 if settings.compact_enabled:
@@ -848,7 +842,7 @@ async def _run_claude(
                     )
                 else:
                     ctx_warning = (
-                        f"\n\n⚠️ 上下文用量: {ctx_pct:.0f}%，建议适时用 `/start` 开新会话。"
+                        f"\n\n⚠️ 上下文用量: {ctx_pct:.0f}%，建议适时用 `/new` 开新会话。"
                     )
 
         # Persist session to disk

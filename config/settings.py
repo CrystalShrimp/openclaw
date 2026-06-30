@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # Context monitoring
     context_warn_percent: int = 80       # warn when context usage exceeds this %
-    context_critical_percent: int = 95   # critical threshold, suggest /start
+    context_critical_percent: int = 95   # critical threshold, suggest /new
 
     # Compact feature (summarize conversation and continue in new session)
     compact_enabled: bool = True

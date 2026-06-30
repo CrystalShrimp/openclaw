@@ -388,22 +388,20 @@ await feishu_client.send_text(open_id, f"[{model}] 开始执行，请等待...")
 
 ---
 
-## 2.11 /start 后工作区没有更新
+## 2.11 /new 后工作区跳回 default（已反转）
 
-**现象**：修改了 `.env` 中的 `DEFAULT_WORKSPACE`，执行 `/start` 后工作区仍然是旧路径。
+**现象**：用户用 `/pwd` 切到某个项目目录工作，发 `/new` 想开新会话——结果 workspace 跳回 `DEFAULT_WORKSPACE`，新会话跑在错的目录里。
 
-**原因**：`reset_user_session()` 中 `workspace = old.workspace if old else None` 把旧 session 的工作区继承到了新 session。
+**原因（旧设计）**：`reset_user_session()` 不传 workspace，回落到 `settings.default_workspace`。早先认为"`/new` 是全新开始，不该继承旧状态"，但实际用法上 `/new` 是"同一项目开新会话"，跳回 default 反而不符合预期。
+
+**修复**：`reset_user_session()` 继承旧 session 的 workspace，仅在没有旧 session 时回落到 default：
 
 ```python
-# 修复前 — 继承旧 workspace
 workspace = old.workspace if old else None
-session = self.create_session(open_id, chat_id, workspace)
-
-# 修复后 — 使用最新配置
-session = self.create_session(open_id, chat_id)  # 不传 workspace
+session = self.create_session(open_id, chat_id, workspace=workspace)
 ```
 
-**关键点**：`/start` 的语义是"全新开始"，不应该继承任何旧状态。
+**关键点**：`/new` 语义 = 同一项目里开新 claude 会话；想换 workspace 用 `/pwd`。修改 `.env` 的 `DEFAULT_WORKSPACE` 后想生效，重启 openclaw 即可（首次 session 会用新 default）。
 
 ---
 
@@ -756,7 +754,7 @@ def cancel_by_user(self, open_id: str) -> bool:
 
 ```python
 if agent_result.status == "cancelled":
-    return  # 调用方（/switch, /stop, /start）已通知用户
+    return  # 调用方（/switch, /stop, /new）已通知用户
 ```
 
 **关键点**：主动取消和任务失败是不同语义。所有 `cancel_by_user` 触发的 future resolve 应该用 `cancelled` 而非 `failed`。
@@ -1276,7 +1274,7 @@ await feishu_client.send_text(
 | audit.log 看不到运行中任务 | `_run_claude` 开头加 `log_command_received(..., "started")` |
 | 启动报 `await outside async function` | `on_card_action` 是 sync，拆 `cancel_by_user`(sync) + `cancel_and_wait`(async) |
 | 配置迁移后启动报错 | `model_config` 添加 `extra="ignore"` |
-| `/start` 后工作区没变 | `reset_user_session` 不要继承旧 workspace |
+| `/new` 后工作区跳回 default | `reset_user_session` 要继承旧 workspace（仅首次回落 default） |
 
 ## 三、子进程管理层
 

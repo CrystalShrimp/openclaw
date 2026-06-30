@@ -166,7 +166,7 @@ flowchart TD
 flowchart TD
     dispatch["_dispatch(open_id, chat_id, text)<br/>由 create_task 调度"]
 
-    cmd_start["/start / /new → reset_user_session()"]
+    cmd_start["/new → reset_user_session()（保留 workspace）"]
     cmd_stop["/stop → cancel_and_wait()"]
     cmd_status["/status → send_text()"]
     cmd_switch["/switch → profile 选择卡片"]
